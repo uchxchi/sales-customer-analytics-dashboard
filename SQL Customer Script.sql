@@ -256,4 +256,177 @@ FROM dbo.customertable
 WHERE IsDiscount = 1
 GROUP BY InvoiceNo;
 
+/*=========================================================
+   9. Analytics
+=========================================================*/
 
+--Total Sales
+SELECT
+	SUM(UnitPrice * Quantity) AS TotalSales
+FROM dbo.OrderLine
+--$8,090,970.11
+
+--Total Orders
+SELECT
+	COUNT(DISTINCT i.InvoiceNo) AS TotalOrders
+FROM dbo.Invoice i
+WHERE EXISTS (
+	SELECT 1
+	FROM dbo.OrderLine o
+	WHERE o.InvoiceNo = i.InvoiceNo
+)
+--21,191
+
+--Customer Count
+SELECT 
+	COUNT(DISTINCT CustomerID)
+FROM Customer
+--4,236
+
+--How many customers are in each AgeBracket and IncomeBracket?
+SELECT
+	AgeBracket,
+	COUNT(DISTINCT CustomerID) AS TotalCustomers,
+	ROUND(
+	CAST(100.0 * COUNT(DISTINCT CustomerID) AS FLOAT) / 
+	SUM(COUNT(DISTINCT CustomerID)) OVER(), 0) AS PercentageTotal
+FROM Customer
+GROUP BY AgeBracket
+ORDER BY TotalCustomers DESC
+/*Customers in their early 30s form the largest age segment, accounting for approximately 16.9% of the total customer base.
+This suggests a strong concentration of customers in early working-age demographics, which may influence product positioning and marketing tone.*/
+
+SELECT
+	IncomeBracket,
+	COUNT(DISTINCT CustomerID) AS TotalCustomers,
+	ROUND(
+	CAST(100.0 * COUNT(DISTINCT CustomerID) AS fLOAT) /
+	SUM(COUNT(DISTINCT CustomerID)) OVER(), 0) AS PercentageTotal
+FROM dbo.Customer
+GROUP BY IncomeBracket
+ORDER BY TotalCustomers DESC
+/*The $30k–$40k income bracket represents the majority of customers at roughly 59%, indicating a predominantly mid-income customer base.
+Pricing, promotions, and value-based messaging should be optimized for price-sensitive but stable earners.*/
+
+--Top Customers By Revenue
+SELECT TOP 10
+	i.CustomerID,
+	SUM(o.Quantity * o.UnitPrice) AS TotalRevenue,
+	ROUND(
+	CAST(SUM(o.Quantity * o.UnitPrice) AS FLOAT) / 
+	SUM(SUM(o.Quantity * o.UnitPrice)) OVER() * 100, 2) AS PercentageOfTotalRevenue
+FROM dbo.Invoice i
+JOIN dbo.OrderLine o
+ON i.InvoiceNo = o.InvoiceNo
+GROUP BY i.CustomerID
+ORDER BY TotalRevenue DESC
+/*The top 10 customers contribute roughly 20% of total revenue, with the highest individual customer accounting for about 3.5%. 
+This indicates moderate revenue concentration, suggesting that retaining top customers is important, but overall revenue risk is diversified
+across the customer base.*/
+
+--Customer Segmentation Trends: Which AgeBracket + IncomeBracket groups buy the most?
+SELECT
+	c.AgeBracket,
+	c.IncomeBracket,
+	COUNT(DISTINCT c.CustomerID) AS CustomersInSegment,
+	SUM(o.Quantity * o.UnitPrice) AS TotalRevenue,
+	ROUND(
+	CAST(SUM(o.Quantity * o.UnitPrice) AS FLOAT) /
+	SUM(SUM(o.Quantity * o.UnitPrice)) OVER() * 100.0, 2) AS PercentageTotal
+FROM dbo.Customer c
+JOIN dbo.Invoice i
+ON c.CustomerID = i.CustomerID
+JOIN dbo.OrderLine o
+ON o.InvoiceNo = i.InvoiceNo
+GROUP BY c.AgeBracket, c.IncomeBracket
+ORDER BY TotalRevenue DESC
+-/*Customers in the early 40s age bracket with incomes between $30k–$40k generate the highest revenue,
+contributing approximately 18% of total sales.*/
+
+--Repeat Customers: Which customers have made more than 1 invoice? How much do they contribute to total revenue?
+SELECT
+	CustomerID,
+	COUNT(DISTINCT i.InvoiceNo) AS InvoiceCount,
+	SUM(o.Quantity * o.UnitPrice) AS TotalRevenue,
+	ROUND(
+	CAST(SUM(o.Quantity * o.UnitPrice) AS FLOAT) /
+	SUM(SUM(o.Quantity * o.UnitPrice)) OVER() * 100.0, 2) AS PercentageTotal
+FROM dbo.Invoice i
+JOIN dbo.OrderLine o
+ON i.InvoiceNo = o.InvoiceNo
+GROUP BY CustomerID
+HAVING COUNT(DISTINCT i.InvoiceNo) > 1
+ORDER BY TotalRevenue DESC;
+/*The top repeat customers contribute a disproportionate share of total revenue.
+Customer 14646, with 74 invoices, accounts for 3.64% of total revenue, while high-frequency customers like 14911 have many orders but 
+lower revenue, highlighting differences in order size. Retaining top repeat customers is critical for revenue stability.*/
+
+--Monthly revenue trends: What is the total sales per month and month-over-month % change?
+WITH MonthlySalesCte AS (
+    SELECT
+        DATETRUNC(MONTH, i.InvoiceDate) AS InvoiceMonth,
+        SUM(o.Quantity * o.UnitPrice) AS MonthlySalesTotal
+    FROM dbo.Invoice i
+    JOIN dbo.OrderLine o
+        ON i.InvoiceNo = o.InvoiceNo
+    GROUP BY DATETRUNC(MONTH, i.InvoiceDate)
+)
+SELECT
+    InvoiceMonth,
+    MonthlySalesTotal,
+    CONCAT(
+        ROUND(
+            CAST(MonthlySalesTotal - LAG(MonthlySalesTotal) OVER(ORDER BY InvoiceMonth) AS FLOAT)
+            / NULLIF(LAG(MonthlySalesTotal) OVER(ORDER BY InvoiceMonth), 0) * 100
+        , 2), '%'
+    ) AS MoMpercentChange
+FROM MonthlySalesCte
+ORDER BY InvoiceMonth
+/*Monthly revenue is volatile, with notable peaks in March, May, September, and November 2011, and sharp declines in April and December 2011.
+The largest drop (-69.96%) occurs in December 2011, which may indicate seasonal trends or an outlier. MoM percent change helps identify months
+with unusually high or low performance, useful for forecasting and planning promotions.*/
+
+--Product insights: What are the top 10 products by revenue?
+SELECT TOP 10
+	StockCode,
+	SUM(Quantity * UnitPrice) AS TotalRevenu,
+	 SUM(Quantity * UnitPrice) AS TotalRevenue,
+    ROUND(
+        CAST(SUM(Quantity * UnitPrice) AS FLOAT)
+        / SUM(SUM(Quantity * UnitPrice)) OVER() * 100
+    , 2) AS PercentageOfTotalRevenue
+FROM dbo.OrderLine
+GROUP BY StockCode
+ORDER BY TotalRevenue DESC
+/*The top 10 products generate approximately 8–9% of total revenue, with the leading product contributing 1.6%. 
+Revenue is fairly diversified across these products, suggesting the business does not rely heavily on a single SKU for revenue. 
+This insight can inform inventory planning, promotion strategies, and product prioritization.*/
+
+--Cohort analysis: Track first purchase month per customer and see total revenue by cohort
+WITH CustomerCohortCTE AS (
+SELECT
+	CustomerID, 
+	MIN(DATETRUNC(MONTH, InvoiceDate)) AS FirstPurchaseMonth
+FROM dbo.Invoice 
+GROUP BY CustomerID
+),
+CohortRevenue AS(
+SELECT 
+	cc.FirstPurchaseMonth,
+	SUM(O.Quantity * O.UnitPrice) AS TotalRevenue
+FROM CustomerCohortCTE cc
+JOIN dbo.Invoice i
+ON cc.CustomerID = i.CustomerID
+JOIN dbo.OrderLine o
+ON i.InvoiceNo = o.InvoiceNo
+GROUP BY cc.FirstPurchaseMonth
+)
+SELECT
+	FirstPurchaseMonth,
+	TotalRevenue
+FROM CohortRevenue
+ORDER BY FirstPurchaseMonth
+/*Cohort analysis shows that customers who made their first purchase in December 2010 contributed the largest total revenue (~4.3M), 
+followed by January 2011 (~966k). Subsequent cohorts generated progressively lower revenue, suggesting that early acquisition months brought 
+in high-value customers, while later months had smaller or lower-spending customer groups. 
+This insight can guide marketing spend and acquisitionstrategies.*/
