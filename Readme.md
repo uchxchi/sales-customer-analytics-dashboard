@@ -112,7 +112,7 @@ To provide a **Sales Overview** answering the question:
 
 ### KPIs (DAX Measures)
 - Total Sales  
-- Total Orders (Refunds exclude) 
+- Total Orders (Refunds excluded) 
 - Gross Quantity Sold  (Refunds excluded)
 - Average Order Value (AOV)
 
