@@ -241,6 +241,7 @@ SELECT
 FROM dbo.customertable
 WHERE IsPlaceholder = 0
   AND TransactionType IN ('Sale', 'Refund')
+  AND UnitPrice > 0
 GROUP BY InvoiceNo, StockCode
 
 CREATE TABLE dbo.InvoiceDiscount (
@@ -273,9 +274,10 @@ FROM dbo.Invoice i
 WHERE EXISTS (
 	SELECT 1
 	FROM dbo.OrderLine o
-	WHERE o.InvoiceNo = i.InvoiceNo
+	WHERE o.InvoiceNo = i.InvoiceNo AND Quantity > 0      
 )
---21,191
+--17,893, Quantity < 0 are refunds and so are excluded from total orders 
+
 
 --Customer Count
 SELECT 
@@ -293,7 +295,7 @@ SELECT
 FROM Customer
 GROUP BY AgeBracket
 ORDER BY TotalCustomers DESC
-/*Customers in their early 30s form the largest age segment, accounting for approximately 16.9% of the total customer base.
+/*Customers in their early 30s form the largest age segment, accounting for approximately 17% of the total customer base.
 This suggests a strong concentration of customers in early working-age demographics, which may influence product positioning and marketing tone.*/
 
 SELECT
